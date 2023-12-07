@@ -32,44 +32,51 @@ async def headline_analysis(stockName: str = Form(...), headlineInfo: str = Form
         "headlineInfo": headlineInfo
     }
 
-    output_data = {}
+    output_data = {
+        "status": "error",  # Default status
+        "message": "",
+        "analysis": {}
+    }
 
     api_key = os.getenv('OPENAI_API_KEY')
     MODEL = "gpt-4"
-    prompt1 = """
-    You're an investor. I'll give you a headline from a company ${stockName}. You just answer is this news positive or negative or neutral for the price of the stock as a one word. choices: Positive, Negative, Neutral.
+    prompt1 = f"""
+    You're an investor. I'll give you a headline from a company {stockName}. You just answer is this news positive or negative or neutral for the price of the stock as a one word. choices: Positive, Negative, Neutral.
             """
-    prompt2 = """
-    Here is a headline from a company ${stockName}. Would an investor consider this news more positive or more negative for the price of the stock. Explain in detail. 60 words
+    prompt2 = f"""
+    Here is a headline from a company {stockName}. Would an investor consider this news more positive or more negative for the price of the stock. Explain in detail. 60 words
             """
+    
+    openai.api_key = api_key
+    
     try:
-        response = openai.ChatCompletion.create(
-            model = MODEL,
+        response1 = openai.ChatCompletion.create(
+            model=MODEL,
             messages=[
                 {"role": "system", "content": prompt1},
                 {"role": "user", "content": input_data["headlineInfo"]}
             ],
             temperature=0,
         )
-        output_data["status"] = response['choices'][0]['message']['content']
-    except Exception:
-        print("Unable to connect OpenAI")
+        output_data["analysis"]["status"] = response1['choices'][0]['message']['content']
 
-    try:
-        response = openai.ChatCompletion.create(
-            model = MODEL,
+        response2 = openai.ChatCompletion.create(
+            model=MODEL,
             messages=[
                 {"role": "system", "content": prompt2},
                 {"role": "user", "content": input_data["headlineInfo"]}
             ],
             temperature=0,
         )
-        output_data["detail"] = response['choices'][0]['message']['content']
-    except Exception:
-        print("Unable to connect OpenAI")
+        output_data["analysis"]["detail"] = response2['choices'][0]['message']['content']
+        
+        output_data["status"] = "success"  # Update status to success if no exception occurred
 
-    
+    except Exception as e:
+        output_data["message"] = str(e)  # Store the error message
+
     return output_data
+
 
 @app.get("/latest-news/")
 async def get_latest_news():
