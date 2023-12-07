@@ -42,28 +42,32 @@ async def headline_analysis(stockName: str = Form(...), headlineInfo: str = Form
     prompt2 = """
     Here is a headline from a company ${stockName}. Would an investor consider this news more positive or more negative for the price of the stock. Explain in detail. 60 words
             """
-    
-    response = openai.ChatCompletion.create(
-        model = MODEL,
-        messages=[
-            {"role": "system", "content": prompt1},
-            {"role": "user", "content": input_data["headlineInfo"]}
-        ],
-        temperature=0,
-    )
+    try:
+        response = openai.ChatCompletion.create(
+            model = MODEL,
+            messages=[
+                {"role": "system", "content": prompt1},
+                {"role": "user", "content": input_data["headlineInfo"]}
+            ],
+            temperature=0,
+        )
+        output_data["status"] = response['choices'][0]['message']['content']
+    except Exception:
+        print("Unable to connect OpenAI")
 
-    output_data["status"] = response['choices'][0]['message']['content']
-    
-    response = openai.ChatCompletion.create(
-        model = MODEL,
-        messages=[
-            {"role": "system", "content": prompt2},
-            {"role": "user", "content": input_data["headlineInfo"]}
-        ],
-        temperature=0,
-    )
+    try:
+        response = openai.ChatCompletion.create(
+            model = MODEL,
+            messages=[
+                {"role": "system", "content": prompt2},
+                {"role": "user", "content": input_data["headlineInfo"]}
+            ],
+            temperature=0,
+        )
+        output_data["detail"] = response['choices'][0]['message']['content']
+    except Exception:
+        print("Unable to connect OpenAI")
 
-    output_data["detail"] = response['choices'][0]['message']['content']
     
     return output_data
 
