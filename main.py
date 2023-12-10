@@ -32,7 +32,7 @@ async def headline_analysis(stockData: NewsDataArray):
         "status": "success",  # Default status
         "stockData": ""
     }
-    stockData = stockData.newsData
+    stockData = stockData["newsData"]
 
     api_key = os.getenv('OPENAI_API_KEY')
     MODEL = "gpt-4-1106-preview"
