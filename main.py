@@ -32,11 +32,8 @@ async def headline_analysis(stockData: NewsDataArray):
         "status": "success",  # Default status
         "stockData": ""
     }
-    stockData = [
-        {"stockName": "A", "headlineInfo": "A stock has fallen"},
-        {"stockName": "B", "headlineInfo": "B stock has fallen"},
-        {"stockName": "C", "headlineInfo": "C stock has risen"},
-    ]
+    stockData = stockData.newsData
+
     api_key = os.getenv('OPENAI_API_KEY')
     MODEL = "gpt-4-1106-preview"
     openai.api_key = api_key
