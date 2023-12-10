@@ -5,7 +5,8 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import openai
-
+import json
+from app.Models.News import NewsDataArray
 app = FastAPI()
 
 app.add_middleware(
@@ -24,64 +25,62 @@ async def root():
 
 ###########################################################
 
-@app.get("/headline-analysis/")
-async def headline_analysis(stockName: str = Form(...), headlineInfo: str = Form(...)):
-
-    input_data = {
-        "stockName": stockName,
-        "headlineInfo": headlineInfo
-    }
+@app.post("/headline-analysis/")
+async def headline_analysis(stockData: NewsDataArray):
 
     output_data = {
-        "status": "error",  # Default status
-        "message": "",
-        "analysis": {}
+        "status": "success",  # Default status
+        "stockData": ""
     }
-
+    stockData = [
+        {"stockName": "A", "headlineInfo": "A stock has fallen"},
+        {"stockName": "B", "headlineInfo": "B stock has fallen"},
+        {"stockName": "C", "headlineInfo": "C stock has risen"},
+    ]
     api_key = os.getenv('OPENAI_API_KEY')
-    MODEL = "gpt-4"
-    prompt1 = f"""
-    You're an investor. I'll give you a headline from a company {stockName}. You just answer is this news positive or negative or neutral for the price of the stock as a one word. choices: Positive, Negative, Neutral.
-            """
-    prompt2 = f"""
-    Here is a headline from a company {stockName}. Would an investor consider this news more positive or more negative for the price of the stock. Explain in detail. 60 words
-            """
-    
+    MODEL = "gpt-4-1106-preview"
     openai.api_key = api_key
     
-    try:
-        response1 = openai.ChatCompletion.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": prompt1},
-                {"role": "user", "content": input_data["headlineInfo"]}
-            ],
-            temperature=0,
-        )
-        output_data["analysis"]["status"] = response1['choices'][0]['message']['content']
+    # Convert stockData into the required format
+    for item in stockData:
+        prompt1 = f"""
+        You're an investor. I'll give you a headline from a company {item['stockName']}. You just answer is this news positive or negative or neutral for the price of the stock as a one word. choices: Positive, Negative, Neutral.
+                """
+        prompt2 = f"""
+        Here is a headline from a company {item['stockName']}. Would an investor consider this news more positive or more negative for the price of the stock. Explain in detail. 60 words
+                """    
+        try:
+            response = openai.ChatCompletion.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": prompt1},
+                    {"role": "user", "content": str(item['headlineInfo'])}
+                ],
+                temperature=0,
+            )
+            status = response['choices'][0]['message']['content']
 
-        response2 = openai.ChatCompletion.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": prompt2},
-                {"role": "user", "content": input_data["headlineInfo"]}
-            ],
-            temperature=0,
-        )
-        output_data["analysis"]["detail"] = response2['choices'][0]['message']['content']
-        
-        output_data["status"] = "success"  # Update status to success if no exception occurred
+            response = openai.ChatCompletion.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": prompt2},
+                    {"role": "user", "content": str(item['headlineInfo'])}
+                ],
+                temperature=0,
+            )
+            detail = response['choices'][0]['message']['content']
+            item['status'] = status
+            item['detail'] = detail
+        except Exception as e:
+            output_data["status"] = str(e)  # Store the error message
 
-    except Exception as e:
-        output_data["message"] = str(e)  # Store the error message
-
+    output_data["stockData"] = stockData
     return output_data
-
 
 @app.get("/latest-news/")
 async def get_latest_news():
 
-    return "hellow world"
+    return "hello world"
 
 ###########################################################
 
