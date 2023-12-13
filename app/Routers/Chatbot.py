@@ -3,9 +3,8 @@ from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File,
 from typing import Annotated
 import os
 from app.Database import db
-from bson import ObjectId
+from bson import ObjectId, Regex
 from fastapi.encoders import jsonable_encoder
-
 
 router = APIRouter()
 latest_DB = db.latestNews
@@ -24,16 +23,48 @@ def fix_object_id(data):
 
 
 @router.get("/get-stock-table")
-async def get_stock_table():
+async def get_stock_table(perPage: int = 10, currentPage: int = 1, searchText: str = '', filterStatus: str = ''):
+    # Create a regex filter for the searchText
+    search_filter = Regex(searchText, 'i')  # 'i' for case-insensitive
 
-    cursor = latest_DB.find({})
-    data_for_show = []
+    # Define the fields to search in
+    search_fields = ['date', 'stockName', 'stockDetail', 'headlineInfo', 'source', 'url', 'detail']
+
+    # Create the query to filter documents containing the searchText in any of the search fields
+    search_query = {
+        '$or': [{field: search_filter} for field in search_fields]
+    }
+
+    # Create a filter for the status
+    status_filter = {'status': filterStatus} if filterStatus else {}
+
+    # Combine the search query with the status filter
+    query = {
+        '$and': [
+            search_query,
+            status_filter
+        ]
+    }
+
+    # Calculate the total count of documents matching the search criteria
+    totalCount = latest_DB.count_documents(query)
+
+    # Calculate the range for pagination
+    skip = perPage * (currentPage - 1)
+    limit = perPage
+
+    # Fetch the filtered and paginated data from the database
+    cursor = latest_DB.find(query).skip(skip).limit(limit)
     
-    for document in cursor:
-        document.pop('_id')
-        data_for_show.append(document)
+    # Convert the cursor to a list
+    data_for_show = list(cursor)
 
-    return jsonable_encoder(data_for_show)
+    # Remove the '_id' field from the documents
+    for document in data_for_show:
+        document.pop('_id', None)
+
+    # Return the JSON-encoded response including data_for_show and totalCount
+    return jsonable_encoder({"data": data_for_show, "totalCount": totalCount})
 
 
 @router.get("/get-number-data")

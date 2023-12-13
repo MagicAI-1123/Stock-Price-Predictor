@@ -7,6 +7,9 @@ import os
 import openai
 import json
 from app.Models.News import NewsDataArray
+from app.Utils.DB import generate_news_hash
+from app.Database import db
+
 app = FastAPI()
 
 app.add_middleware(
@@ -32,7 +35,7 @@ async def headline_analysis(stockData: NewsDataArray):
         "status": "success",  # Default status
         "stockData": ""
     }
-    stockData = stockData["newsData"]
+    stockData = stockData.dict()["newsData"]
 
     api_key = os.getenv('OPENAI_API_KEY')
     MODEL = "gpt-4-1106-preview"
@@ -40,6 +43,15 @@ async def headline_analysis(stockData: NewsDataArray):
     
     # Convert stockData into the required format
     for item in stockData:
+        hash = generate_news_hash(item)
+        document = db.stockData.find_one({'_id': hash})
+        print(document)
+        if document != None:
+            print("recorded document")
+            item['status'] = document.get('status')
+            item['detail'] = document.get('detail')
+            continue
+            
         prompt1 = f"""
         You're an investor. I'll give you a headline from a company {item['stockName']}. You just answer is this news positive or negative or neutral for the price of the stock as a one word. choices: Positive, Negative, Neutral.
                 """
@@ -66,11 +78,12 @@ async def headline_analysis(stockData: NewsDataArray):
                 temperature=0,
             )
             detail = response['choices'][0]['message']['content']
+            
             item['status'] = status
             item['detail'] = detail
+            print(item)
         except Exception as e:
             output_data["status"] = str(e)  # Store the error message
-
     output_data["stockData"] = stockData
     return output_data
 
