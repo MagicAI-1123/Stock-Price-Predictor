@@ -3,12 +3,16 @@ import json
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form, Body, Query
 from typing import Annotated, List
 import os
+import pytz
 from app.Database import db
 from bson import ObjectId, Regex
 from fastapi.encoders import jsonable_encoder
 from datetime import datetime, timedelta
+from app.Utils.Pinecone import get_answer
+from fastapi.responses import StreamingResponse
 router = APIRouter()
 latest_DB = db.stockNews
+
 
 def fix_object_id(data):
     if isinstance(data, list):
@@ -32,16 +36,28 @@ async def get_unique_sources():
         # In case of any errors, return an HTTP 500 error with the exception message
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/get-stock-table")
-async def get_stock_table(perPage: int = 10, currentPage: int = 1, searchText: str = '', filterStatus: str = '', startDate: str = datetime.now().strftime("%Y-%m-%d"), endDate: str = datetime.now().strftime("%Y-%m-%d"), filterSource: List[str] = Query(None)):
+async def get_stock_table(perPage: int = 10, currentPage: int = 1, searchText: str = '', filterStatus: str = '', startDate: str = datetime.now().strftime("%Y-%m-%d"), endDate: str = datetime.now().strftime("%Y-%m-%d"), filterSource: List[str] = Query(None), timezone: str = "America/New_York"):
+
+    if( timezone == "undefined"):
+        timezone = "America/New_York"
+    # Convert the startDate and endDate to the timezone specified
+    tz = pytz.timezone(timezone)
+    start_date = tz.localize(datetime.strptime(startDate, "%Y-%m-%d"))
+    end_date = tz.localize(datetime.strptime(
+        endDate, "%Y-%m-%d")) + timedelta(days=1)  # Include the entire endDate
+
     # Split the searchText into individual search terms and strip whitespace
-    search_terms = [term.strip() for term in searchText.split(',') if term.strip()]
+    search_terms = [term.strip()
+                    for term in searchText.split(',') if term.strip()]
 
     # Create a regex filter for each search term (case-insensitive)
     search_filters = [Regex(term, 'i') for term in search_terms]
 
     # Define the fields to search in
-    search_fields = ['date', 'stockName', 'stockDetail', 'headlineInfo', 'source', 'url', 'detail']
+    search_fields = ['date', 'stockName', 'stockDetail',
+                     'headlineInfo', 'source', 'url', 'detail']
 
     # Create the query to filter documents containing any of the search terms in any of the search fields
     search_query = {
@@ -55,8 +71,10 @@ async def get_stock_table(perPage: int = 10, currentPage: int = 1, searchText: s
     date_filter = {}
     if startDate and endDate:
         start_date = datetime.strptime(startDate, "%Y-%m-%d")
-        end_date = datetime.strptime(endDate, "%Y-%m-%d") + timedelta(days=1)  # Add 1 day to include the entire endDate
-        date_filter = {'date': {'$gte': start_date, '$lt': end_date}}  # Use $lt to exclude the next day
+        # Add 1 day to include the entire endDate
+        end_date = datetime.strptime(endDate, "%Y-%m-%d") + timedelta(days=1)
+        # Use $lt to exclude the next day
+        date_filter = {'date': {'$gte': start_date, '$lt': end_date}}
 
     # Check if filterSource is not empty and contains a single string element
     if filterSource and len(filterSource) == 1 and isinstance(filterSource[0], str):
@@ -71,10 +89,12 @@ async def get_stock_table(perPage: int = 10, currentPage: int = 1, searchText: s
         actual_filterSource_list = []
 
     # Now create the source filter using the decoded list, if it's not empty
-    source_filter = {'source': {'$in': actual_filterSource_list}} if actual_filterSource_list else None
+    source_filter = {'source': {'$in': actual_filterSource_list}
+                     } if actual_filterSource_list else None
 
     # Combine all filters, excluding any that are None or empty dictionaries
-    query_filters = [f for f in (search_query, status_filter, date_filter, source_filter) if f]
+    query_filters = [f for f in (
+        search_query, status_filter, date_filter, source_filter) if f]
 
     query = {'$and': query_filters} if query_filters else {}
     # Calculate the total count of documents matching the search criteria
@@ -86,16 +106,23 @@ async def get_stock_table(perPage: int = 10, currentPage: int = 1, searchText: s
 
     # Fetch the filtered and paginated data from the database
     cursor = latest_DB.find(query).sort('date', -1).skip(skip).limit(limit)
-    
+
     # Convert the cursor to a list
     data_for_show = list(cursor)
 
-    # Remove the '_id' field from the documents
+    # When returning the data, convert the 'date' of each document to the specified timezone
     for document in data_for_show:
         document.pop('_id', None)
+        # Convert the 'date' field to the specified timezone
+        if 'date' in document:
+            # Assume 'date' is already a datetime object
+            local_date = document['date'].replace(
+                tzinfo=pytz.utc).astimezone(tz)
+            document['date'] = local_date.strftime("%Y-%m-%d %H:%M:%S")
 
     # Return the JSON-encoded response including data_for_show and totalCount
     return jsonable_encoder({"data": data_for_show, "totalCount": totalCount})
+
 
 @router.get("/get-number-data")
 async def get_number_data(stockName: str):
@@ -103,6 +130,7 @@ async def get_number_data(stockName: str):
     document = numberData_collection.find_one()
 
     return jsonable_encoder(document[stockName])
+
 
 @router.get("/get-stock-headlines")
 async def get_stock_headlines(stockName: str):
@@ -118,7 +146,7 @@ async def get_stock_headlines(stockName: str):
 
     # Fetch the filtered data from the database and sort by date in descending order
     cursor = latest_DB.find(query).sort('date', -1)
-    
+
     # Convert the cursor to a list
     data_for_show = list(cursor)
 
@@ -129,6 +157,7 @@ async def get_stock_headlines(stockName: str):
     # Return the JSON-encoded response including data_for_show
     return jsonable_encoder({"data": data_for_show})
 
+
 @router.get("/get-tickers")
 async def get_tickers():
 
@@ -136,3 +165,13 @@ async def get_tickers():
     document = tickers_collection.find_one()
 
     return jsonable_encoder(list(document["tickers"]))
+
+@router.post("/user-question")
+def ask_question(msg: str = Form(...)):
+    print(msg)
+    try:
+        #return get_answer(msg, "goldrace")
+        return StreamingResponse(get_answer(msg, "goldrace"), media_type='text/event-stream')
+    except Exception as e:
+        print(e)
+        return e
