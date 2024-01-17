@@ -17,10 +17,13 @@ import pinecone
 import openai
 import tiktoken
 import time
-
+import json
+import sys
+from datetime import datetime, timedelta
 
 from app.Database import db
 latest_News_DB = db.latestNews
+old_News_DB = db.stockNews
 
 # from pinecone import Index
 
@@ -36,7 +39,7 @@ pinecone.init(
 
 index_name = os.getenv('PINECONE_INDEX')
 embeddings = OpenAIEmbeddings()
-
+count = 0
 
 def tiktoken_len(text):
     tokens = tokenizer.encode(
@@ -45,48 +48,90 @@ def tiktoken_len(text):
     )
     return len(tokens)
 
-def get_context(query_str: str):
+def split_document(doc: Document):
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=300,
+        chunk_overlap=50,
+        length_function=tiktoken_len,
+        separators=["\n\n", "\n", " ", ""]
+    )
+    chunks = text_splitter.split_documents([doc])
+    print(len(chunks))
+    return chunks
 
+
+def train_stock(news: object, namespace: str):
+    start_time = time.time()
+    print(news["detail"])
+    print(tiktoken_len(news["detail"]))
+    news_dump = json.dumps(news)
+    doc = Document(page_content=news["headlineInfo"], metadata={"source": news_dump})
+    chunks = split_document(doc)
+    Pinecone.from_documents(
+        chunks, embeddings, index_name=index_name, namespace=namespace)
+
+    doc = Document(page_content=news["detail"], metadata={"source": news_dump})
+    chunks = split_document(doc)
+    Pinecone.from_documents(
+        chunks, embeddings, index_name=index_name, namespace=namespace)
+
+    end_time = time.time()
+    print("Elapsed time: ", end_time - start_time)
+
+def get_context(query_str: str, namespace: str):
+    context = ""
     print("query : " + query_str)
-    
-    best_match_ids = []
-    best_match_result = []
-    similarity_value_limit = 0.8
+    print(namespace)
 
-    db = Pinecone.from_existing_index(
-        index_name=index_name, embedding=embeddings)
-    results = db.similarity_search_with_score(query_str, k=20)
+    # db = Pinecone.from_existing_index(
+    #     index_name=index_name, namespace=namespace, embedding=embeddings)
 
-    for result in results:
-        print("row_id: ", result[0].metadata['row_id'], ", score: ", result[1])
-        best_match_ids.append(result[0].metadata['row_id'])
-        best_match_result.append({"content":result[0].page_content})
-        # if result[1] >= similarity_value_limit:
-        #     matching_metadata.append(result[0].metadata['source'])
-        #     context += f"\n\n{result[0].page_content}"
+    response = openai.Embedding.create(
+        input=query_str,
+        model="text-embedding-ada-002"
+    )
+    query_embedding = response['data'][0]['embedding']
+    index = pinecone.Index(index_name)
+    # print(query_embedding)
 
-    # matching_metadata = list(set(matching_metadata))
-
-    return best_match_result   
+    results = index.query(
+        vector=query_embedding,
+        top_k=10,
+        include_metadata=True,
+        namespace=namespace
+    )
+    # print(results['matches'])
+    # context = results['matches']
+    for result in results['matches']:
+        context += result.metadata['news'] + '\n'
+    print("context: ", context)
+    return context   
 
 
 def get_answer(msg: str, log_id:str):
-    pinecone_context = get_context(msg)
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    pinecone_context = f"""
+        Today is {date_str}.
+    """
+    # print(log_id)
+    for days in range(0, 7):
+        now = datetime.now()
+        date_only = (now - timedelta(days=days)).date()
+        date_str = date_only.strftime("%Y-%m-%d")
+        days_context = get_context(msg, date_str)
+        pinecone_context += f"""
+            - This is the news from {days} days ago that you can refer to.
+            {days_context}
+        """
+    
+    old_context = get_context(msg, "old")
+    pinecone_context += f"""
+        - This news was published more than a week ago that you can refer to.
+        {old_context}
+    """
     print(pinecone_context)
 
-    context = ""
-    latest_news = latest_News_DB.find({})
-    for news in latest_news:
-        context += f"""
-            [
-            stock name: {news['stockName']}
-            headline: {news["headlineInfo"]}
-            date: {news["date"]}
-            ]
-            -------------------
-
-        """
-    print(tiktoken_len(context))
+    print(tiktoken_len(pinecone_context))
 
     instructor = f"""
         You will act as a kind Stock news analyser and assistant for stocks.
@@ -94,7 +139,7 @@ def get_answer(msg: str, log_id:str):
         Each item contains headline and matching stock names.
         You can refer to this context.
         -----------------------
-        {context}
+        {pinecone_context}
     """
     # instructor = f"""
     #     You will play the role of a stock headline analyst.
@@ -108,6 +153,7 @@ def get_answer(msg: str, log_id:str):
     # """
     final = ""
     saved_messages = find_messages_by_id(log_id)
+    
     messages = [{'role': message.role, 'content': message.content}
                 for message in saved_messages[-4:]]
     messages.append({'role': 'user', 'content': msg + "\n Please answer based on given context."})
@@ -126,7 +172,7 @@ def get_answer(msg: str, log_id:str):
                 yield string
                 final += string
         # final = response_text = response['choices'][0]['message']['content']
-        print(response)
+        # print(response)
         print(final)
     except Exception as e:
         print(e)
@@ -134,6 +180,156 @@ def get_answer(msg: str, log_id:str):
     add_new_message_to_db(logId=log_id, msg=Message(content=msg, role="user"))
     add_new_message_to_db(logId=log_id, msg=Message(content=final, role="assistant"))
 
-    # print(response)
-    # print(response.choices[0].message.content)
-    return final
+    # return final
+
+def estimate_time_difference(given_date):
+    now = datetime.now().date()
+    difference = now - given_date
+    return difference.days
+
+
+def embed_into_index(contexts_to_embed, metadatas, namespace: str):
+    global count
+    try:
+        # Ensure that contexts_to_embed is a list of strings and not empty
+        if isinstance(contexts_to_embed, list) and all(isinstance(item, str) for item in contexts_to_embed):
+            response = openai.Embedding.create(
+                input=contexts_to_embed,
+                model="text-embedding-ada-002"
+            )
+            embeddings = [embedding['embedding'] for embedding in response['data']]
+
+            # Initialize Pinecone index
+            index = pinecone.Index(index_name)
+            
+            # Prepare the vectors for upserting to Pinecone
+            vectors = []
+            for embedding, metadata in zip(embeddings, metadatas):
+                vectors.append({
+                    "id": "vec" + str(count),
+                    'values': embedding,
+                    "metadata": {"news": metadata}
+                })
+                count += 1
+            
+            # Upsert the vectors to Pinecone
+            upsert_response = index.upsert(
+                vectors=vectors,
+                namespace=namespace
+            )
+        else:
+            print("Error: 'contexts_to_embed' is empty or contains non-string elements.")
+    except openai.error.InvalidRequestError as e:
+        print("Invalid request to OpenAI API:")
+        print(e)
+    except Exception as e:
+        print("An error occurred while processing embeddings or upserting to Pinecone:")
+        print(e)
+    
+
+def get_size(obj, seen=None):
+    size = sys.getsizeof(obj)
+    if seen is None:
+        seen = set()
+    obj_id = id(obj)
+    if obj_id in seen:
+        return 0
+    seen.add(obj_id)
+    if isinstance(obj, dict):
+        size += sum([get_size(v, seen) for v in obj.values()])
+        size += sum([get_size(k, seen) for k in obj.keys()])
+    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, bytearray)):
+        size += sum([get_size(i, seen) for i in obj])
+    return size
+
+
+def train_latest_news():
+    latest_news = latest_News_DB.find({}, {'_id': 0})
+
+    contexts_to_embed = []
+    metadata = []
+    total_tokens = 0
+    start_time = time.time()
+    max_message_size = 4194304 * 0.9
+    news_dump = ""
+    for news in latest_news:
+        # print(news)
+        news_dump = None
+        if 'headlineInfo' in news and news['headlineInfo'] is not None:
+            contexts_to_embed.append(news['headlineInfo'])
+            total_tokens += tiktoken_len(news['headlineInfo'])
+            news_dump = news['headlineInfo']
+            metadata.append(news_dump)
+        if 'detail' in news and news['detail'] is not None:
+            contexts_to_embed.append(news['detail'])
+            total_tokens += tiktoken_len(news['detail'])
+            if news_dump is not None:
+                metadata.append(news_dump)
+        
+        # Check the size before adding more data
+        current_size = get_size(contexts_to_embed) + get_size(metadata)
+        if current_size >= max_message_size or total_tokens > 7500 :
+            # if 'date' not in news:
+            #     print(news)
+            # print(type(news['date']))
+            
+
+            if isinstance(news['date'], str):
+                namespace, time_str = news['date'].split()
+            else:
+                namespace = namespace = news['date'].strftime("%Y-%m-%d")
+                print(namespace)
+
+            embed_into_index(contexts_to_embed, metadata, namespace)
+            print(len(contexts_to_embed))
+            total_tokens = 0
+            contexts_to_embed = []
+            metadata = []
+    if len(contexts_to_embed) > 0:
+        embed_into_index(contexts_to_embed, metadata, namespace)
+
+def train_old_news():
+    # old_news = old_News_DB.find({})
+    # contexts_to_embed = []
+    # for news in old_news:
+    #     news.pop('_id', None)
+    #     news.pop('date', None)
+    #     contexts_to_embed.append(news["headlineInfo"])
+
+    old_news_cursor = old_News_DB.find({}, {'date': 0, '_id': 0})
+
+    contexts_to_embed = []
+    metadata = []
+    total_tokens = 0
+    start_time = time.time()
+    max_message_size = 4194304 * 0.9
+    news_dump = ""
+    
+    for news in old_news_cursor:
+        news_dump = None
+        if 'headlineInfo' in news and news['headlineInfo'] is not None:
+            contexts_to_embed.append(news['headlineInfo'])
+            total_tokens += tiktoken_len(news['headlineInfo'])
+            news_dump = news['headlineInfo']
+            metadata.append(news_dump)
+        if 'detail' in news and news['detail'] is not None:
+            contexts_to_embed.append(news['detail'])
+            total_tokens += tiktoken_len(news['detail'])
+            if news_dump is not None:
+                metadata.append(news_dump)
+        
+        # Check the size before adding more data
+        current_size = get_size(contexts_to_embed) + get_size(metadata)
+        if current_size >= max_message_size or total_tokens > 7500 :
+            embed_into_index(contexts_to_embed, metadata, "old")
+            print(len(contexts_to_embed))
+            # print(total_tokens)
+            # print(current_size)
+            total_tokens = 0
+            contexts_to_embed = []
+            metadata = []
+            # break
+    if len(contexts_to_embed) > 0:
+        embed_into_index(contexts_to_embed, metadata, "old")
+    
+    

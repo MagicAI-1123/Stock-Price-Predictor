@@ -8,10 +8,18 @@ from app.Database import db
 from bson import ObjectId, Regex
 from fastapi.encoders import jsonable_encoder
 from datetime import datetime, timedelta
-from app.Utils.Pinecone import get_answer
+from app.Utils.Pinecone import get_answer, train_latest_news, train_old_news
+from app.Models.User import User, QuestionModel, find_user_by_email
+from app.Models.ChatLogModel import find_messages_by_id
+from app.Models.Favourite import FavouriteData, RequestFavourite
+from app.Models.News import ChartModel
+from app.Dependency.Auth import get_current_user
+from app.Utils.ChartData import chart_data
+
 from fastapi.responses import StreamingResponse
 router = APIRouter()
 latest_DB = db.stockNews
+favourites_DB = db.favourites
 
 
 def fix_object_id(data):
@@ -40,7 +48,7 @@ async def get_unique_sources():
 @router.get("/get-stock-table")
 async def get_stock_table(perPage: int = 10, currentPage: int = 1, searchText: str = '', filterStatus: str = '', startDate: str = datetime.now().strftime("%Y-%m-%d"), endDate: str = datetime.now().strftime("%Y-%m-%d"), filterSource: List[str] = Query(None), timezone: str = "America/New_York"):
 
-    if( timezone == "undefined"):
+    if (timezone == "undefined"):
         timezone = "America/New_York"
     # Convert the startDate and endDate to the timezone specified
     tz = pytz.timezone(timezone)
@@ -166,12 +174,86 @@ async def get_tickers():
 
     return jsonable_encoder(list(document["tickers"]))
 
+
 @router.post("/user-question")
-def ask_question(msg: str = Form(...)):
-    print(msg)
+def ask_question(user: Annotated[User, Depends(get_current_user)], question: QuestionModel):
+# def ask_question(user: Annotated[User, Depends(get_current_user)], msg: str = Form(...)):
+    # print(msg)
     try:
-        #return get_answer(msg, "goldrace")
-        return StreamingResponse(get_answer(msg, "goldrace"), media_type='text/event-stream')
+        # print(user.email)
+        # print(get_user_id(user.email))
+        saved_messages = find_messages_by_id(user.email)
+        if len(saved_messages) >= 6:
+            print("exceed")
+            return "you exceeded daily limit"
+        return StreamingResponse(get_answer(question.msg, user.email), media_type='text/event-stream')
+    except Exception as e:
+        print(e)
+        return e
+
+@router.post("/find-all-chatlogs")
+def find_all_chatlogs(user: Annotated[User, Depends(get_current_user)]):
+    try:
+        return find_messages_by_id(user.email)
+    except Exception as e:
+        print(e)
+        return e
+
+@router.post("/embbed-latest-news")
+def embbed_latest_news():
+    try:
+        print("embbed latest")
+        train_latest_news()
+    except Exception as e:
+        print(e)
+        return e
+
+
+@router.post("/embbed-old-news")
+def embbed_old_news():
+    try:
+        print("embbed old")
+        train_old_news()
+    except Exception as e:
+        print(e)
+        return e
+
+
+@router.post("/save-favourite")
+# 
+async def save_favourite(user: Annotated[User, Depends(get_current_user)], data: RequestFavourite):
+    favourite_data = {
+        "name": data.name,
+        "email": "user.email",
+        "sources": data.sources,
+        "date": datetime.now().strftime("%d/%m/%Y")
+    }
+    # Insert the favourite data into the database
+    insert_result = favourites_DB.insert_one(favourite_data)
+    if insert_result.inserted_id:
+        return {"status": "success", "message": "Favourite saved successfully"}
+    else:
+        raise HTTPException(
+            status_code=500, detail="Failed to save favourite data")
+
+
+@router.get("/get-favourite")
+async def get_favourite(user: Annotated[User, Depends(get_current_user)]):
+    # Find the favourite data for the current user using their email
+    favourite_data = favourites_DB.find({"email": "user.email"})
+    favourites_list = list(favourite_data)
+
+    # Convert the '_id' field to a string for each document
+    for favourite in favourites_list:
+        favourite['_id'] = str(favourite['_id'])
+    return jsonable_encoder(favourites_list)
+
+
+
+@router.post("/get-chart-data")
+def get_chart_data(chartdata: ChartModel):
+    try:
+        return chart_data(chartdata.stockName, chartdata.start, chartdata.end)
     except Exception as e:
         print(e)
         return e

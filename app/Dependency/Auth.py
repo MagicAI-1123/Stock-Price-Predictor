@@ -24,18 +24,18 @@ def get_password_hash(password):
     return pwd_context.hash(password)
 
 
-def get_user(email: str):
-    user = find_user_by_email(email.lower())
-    if not user:
-        return None
-    return User(**user)
+# def get_user(email: str):
+#     user = find_user_by_email(email.lower())
+#     if not user:
+#         return None
+#     return User(**user)
 
 
 def authenticate_user(email: str, password: str):
-    user = get_user(email)
+    user = find_user_by_email(email.lower())
     if not user:
         return False
-    if not verify_password(password, user.password):
+    if not verify_password(password, user.hashed_password):
         return False
     return user
 
@@ -49,7 +49,6 @@ def create_access_token(data: dict):
 
 
 async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
-    
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials. Please sign in again",
@@ -62,7 +61,7 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
             raise credentials_exception
     except JWTError:
         raise credentials_exception
-    user = get_user(email)
+    user = find_user_by_email(email)
     if user is None:
         raise credentials_exception
     return user

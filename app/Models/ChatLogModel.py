@@ -44,8 +44,6 @@ def remove_chatlog(id: str, email: str):
     ChatlogsDB.delete_one({"logId": id, "email": email})
     return True
 
-
-
 def add_new_message(logId: str, msg: Message):
     result = ChatlogsDB.find_one({"logId": logId})
 

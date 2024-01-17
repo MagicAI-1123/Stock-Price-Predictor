@@ -9,3 +9,8 @@ class NewsItem(BaseModel):
 # Define a Pydantic model for the request body that includes the newsData array
 class NewsDataArray(BaseModel):
     newsData: List[NewsItem]
+
+class ChartModel(BaseModel):
+    stockName: str
+    start: str
+    end: str

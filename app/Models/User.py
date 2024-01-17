@@ -9,7 +9,8 @@ class UserForClient(BaseModel):
 
 
 class User(UserForClient):
-    password: str
+    hashed_password: str
+
 
 
 class UserWithAPI(User):
@@ -21,19 +22,25 @@ class SignInModel(BaseModel):
     password: str
 
 
-class SignUpModel(User):
-    def password_match(cls, confirm_password, values):
-        if 'password' in values and confirm_password != values['password']:
-            raise ValueError("Passwords do not match")
-        return confirm_password
+class SignUpModel(SignInModel):
+    confirm_password: str
+
+class QuestionModel(BaseModel):
+    msg: str
 
 
 def find_user_by_email(email: str):
-    return UserDB.find_one({"email": email})
+    user = UserDB.find_one({"email": email})
+    if not user:
+        return None
+    return User(**user)
 
+# def get_user_id(email: str):
+#     user = UserDB.find_one({"email": email})
+#     return str(user["_id"])
 
 def add_user(user: User):
-    return UserDB.insert_one(user.dict())
+    return UserDB.insert_one(user)
 
 
 def get_all_users():
