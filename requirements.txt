@@ -9,6 +9,7 @@ certifi==2023.11.17
 charset-normalizer==3.3.2
 click==8.1.7
 dataclasses-json==0.6.3
+distro==1.8.0
 dnspython==2.4.2
 ecdsa==0.18.0
 exceptiongroup==1.2.0
@@ -16,10 +17,13 @@ fastapi==0.104.1
 frozenlist==1.4.0
 greenlet==3.0.1
 h11==0.14.0
+httpcore==1.0.2
+httpx==0.25.2
 idna==3.6
 jsonpatch==1.33
 jsonpointer==2.4
 langchain==0.0.343
+langchain-community==0.0.3
 langchain-core==0.0.7
 langsmith==0.0.67
 loguru==0.7.2
