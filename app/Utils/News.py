@@ -16,3 +16,12 @@ def chart_data(stockName: str, start: str, end: str):
     else:
         print(f"Error: {response.status_code}")
     
+def up_downgrades_consensus(stockName: str):
+    api_endpoint = f"https://financialmodelingprep.com/api/v4/upgrades-downgrades-consensus?symbol={stockName}&apikey={api_key}"
+    response = requests.get(api_endpoint)
+    if response.status_code == 200:
+        data = response.json()
+        print(data)
+        return data
+    else:
+        print(f"Error: {response.status_code}")

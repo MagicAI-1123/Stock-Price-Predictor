@@ -12,14 +12,15 @@ from app.Utils.Pinecone import get_answer, train_latest_news, train_old_news
 from app.Models.User import User, QuestionModel, find_user_by_email
 from app.Models.ChatLogModel import find_messages_by_id
 from app.Models.Favourite import FavouriteData, RequestFavourite
-from app.Models.News import ChartModel
+from app.Models.News import ChartModel, ConsensusModel, find_all_groups
 from app.Dependency.Auth import get_current_user
-from app.Utils.ChartData import chart_data
+from app.Utils.News import chart_data, up_downgrades_consensus
 
 from fastapi.responses import StreamingResponse
 router = APIRouter()
 latest_DB = db.stockNews
 favourites_DB = db.favourites
+# groupList_DB = db.
 
 
 def fix_object_id(data):
@@ -62,18 +63,19 @@ async def get_stock_table(perPage: int = 10, currentPage: int = 1, searchText: s
 
     # Create a regex filter for each search term (case-insensitive)
     search_filters = [Regex(term, 'i') for term in search_terms]
-
+    print(search_filters)
     # Define the fields to search in
     search_fields = ['date', 'stockName', 'stockDetail',
                      'headlineInfo', 'source', 'url', 'detail']
+
+    
 
     # Create the query to filter documents containing any of the search terms in any of the search fields
     search_query = {
         '$or': [{field: {'$in': search_filters}} for field in search_fields]
     } if search_terms else {}
-
+    
     # Create a filter for the status
-    status_filter = {'status': filterStatus} if filterStatus else {}
 
     # Parse date strings into datetime objects and create a date range filter
     date_filter = {}
@@ -100,13 +102,27 @@ async def get_stock_table(perPage: int = 10, currentPage: int = 1, searchText: s
     source_filter = {'source': {'$in': actual_filterSource_list}
                      } if actual_filterSource_list else None
 
-    # Combine all filters, excluding any that are None or empty dictionaries
+    status_count_to_return = {"all": 0, "Positive": 0, "Negative": 0, "Neutral": 0}
+    status_list = ["", "Positive", "Negative", "Neutral"]
+    status_count_list = []
+    for status in status_list:
+        status_filter = {'status': status} if status else {}
+        query_filters = [f for f in (
+            search_query, status_filter, date_filter, source_filter) if f]
+        # Combine all filters, excluding any that are None or empty dictionaries
+        query = {'$and': query_filters} if query_filters else {}
+        status_count_list.append(latest_DB.count_documents(query))
+    print(status_count_list)
+
+    status_count_to_return = dict(zip(status_count_to_return.keys(), status_count_list))
+    print(status_count_to_return)
+
+
+    status_filter = {'status': filterStatus} if filterStatus else {}
     query_filters = [f for f in (
         search_query, status_filter, date_filter, source_filter) if f]
-
+    # Combine all filters, excluding any that are None or empty dictionaries
     query = {'$and': query_filters} if query_filters else {}
-    # Calculate the total count of documents matching the search criteria
-    totalCount = latest_DB.count_documents(query)
 
     # Calculate the range for pagination
     skip = perPage * (currentPage - 1)
@@ -129,7 +145,7 @@ async def get_stock_table(perPage: int = 10, currentPage: int = 1, searchText: s
             document['date'] = local_date.strftime("%Y-%m-%d %H:%M:%S")
 
     # Return the JSON-encoded response including data_for_show and totalCount
-    return jsonable_encoder({"data": data_for_show, "totalCount": totalCount})
+    return jsonable_encoder({"data": data_for_show, **status_count_to_return})
 
 
 @router.get("/get-number-data")
@@ -176,17 +192,20 @@ async def get_tickers():
 
 
 @router.post("/user-question")
-def ask_question(user: Annotated[User, Depends(get_current_user)], question: QuestionModel):
+def ask_question(question: QuestionModel): #user: Annotated[User, Depends(get_current_user)], 
 # def ask_question(user: Annotated[User, Depends(get_current_user)], msg: str = Form(...)):
     # print(msg)
     try:
         # print(user.email)
         # print(get_user_id(user.email))
+        
         saved_messages = find_messages_by_id(user.email)
+        saved_messages = find_messages_by_id("goldrace@gmail.com")
         if len(saved_messages) >= 6:
             print("exceed")
             return "you exceeded daily limit"
         return StreamingResponse(get_answer(question.msg, user.email), media_type='text/event-stream')
+        # return StreamingResponse(get_answer(question.msg, "goldrace@gmail.com"), media_type='text/event-stream')
     except Exception as e:
         print(e)
         return e
@@ -251,9 +270,56 @@ async def get_favourite(user: Annotated[User, Depends(get_current_user)]):
 
 
 @router.post("/get-chart-data")
-def get_chart_data(chartdata: ChartModel):
+def get_chart_data(user: Annotated[User, Depends(get_current_user)], chartdata: ChartModel):
     try:
         return chart_data(chartdata.stockName, chartdata.start, chartdata.end)
     except Exception as e:
         print(e)
         return e
+
+@router.post("/send-mail")
+async def send_mail(user: Annotated[User, Depends(get_current_user)]):
+    try:
+        from_email_obj = Email(from_mail)  # Change to your verified sender
+        to_email_obj = To(user.email)  # Change to your recipient
+        # text = f""
+        subject = "phone verification"
+        content = Content("text/plain", text)
+        mail = Mail(from_email_obj, to_email_obj, subject, content)
+
+        # Get a JSON-ready representation of the Mail object
+        mail_json = mail.get()
+
+        # Send an HTTP POST request to /mail/send
+        response = sendgrid_client.client.mail.send.post(
+            request_body=mail_json)
+        if response.status_code == 202:
+            return True
+        else:
+            return False
+    except Exception as e:
+        print(f"Send mail Error: {e}")
+        # return HTTPException(status_code=500, detail={"error": e})
+        return False
+
+@router.get("/email-verification")
+def email_verification(user: Annotated[User, Depends(get_current_user)]):
+    return True
+
+
+@router.post("/up-downgrades")
+def up_downgrades(user: Annotated[User, Depends(get_current_user)], data: ConsensusModel):
+    try:
+        return up_downgrades_consensus(data.stockName)
+    except Exception as e:
+        print(e)
+        return e
+
+@router.post("/get-grouplist")
+def get_grouplist(user: Annotated[User, Depends(get_current_user)]):
+    try:
+        return find_all_groups()
+    except Exception as e:
+        print(e)
+        return e
+    
