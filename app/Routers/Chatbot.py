@@ -200,7 +200,8 @@ def ask_question(user: Annotated[User, Depends(get_current_user)], question: Que
         # print(get_user_id(user.email))
         
         saved_messages = find_messages_by_id(user.email)
-        saved_messages = find_messages_by_id("goldrace@gmail.com")
+        # saved_messages = find_messages_by_id("goldrace@gmail.com")
+        print(saved_messages)
         if len(saved_messages) >= 20:
             print("exceed")
             return "you exceeded daily limit"
