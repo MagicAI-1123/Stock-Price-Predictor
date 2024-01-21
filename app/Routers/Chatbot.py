@@ -201,7 +201,7 @@ def ask_question(question: QuestionModel): #user: Annotated[User, Depends(get_cu
         
         saved_messages = find_messages_by_id(user.email)
         saved_messages = find_messages_by_id("goldrace@gmail.com")
-        if len(saved_messages) >= 6:
+        if len(saved_messages) >= 20:
             print("exceed")
             return "you exceeded daily limit"
         return StreamingResponse(get_answer(question.msg, user.email), media_type='text/event-stream')
