@@ -192,8 +192,8 @@ async def get_tickers():
 
 
 @router.post("/user-question")
-def ask_question(question: QuestionModel): #user: Annotated[User, Depends(get_current_user)], 
-# def ask_question(user: Annotated[User, Depends(get_current_user)], msg: str = Form(...)):
+# def ask_question(question: QuestionModel): #user: Annotated[User, Depends(get_current_user)], 
+def ask_question(user: Annotated[User, Depends(get_current_user)], question: QuestionModel): #
     # print(msg)
     try:
         # print(user.email)
